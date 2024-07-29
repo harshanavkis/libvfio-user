@@ -582,7 +582,15 @@ test_device_is_stopped_and_copying(UNUSED void **state)
 
     size_t i;
     struct migration migration;
+#if !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpragmas"
+#pragma GCC diagnostic ignored "-Wdangling-pointer="
+#endif
     vfu_ctx.migration = &migration;
+#if !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
     for (i = 0; i < ARRAY_SIZE(migr_states); i++) {
         if (migr_states[i].name == NULL) {
             continue;

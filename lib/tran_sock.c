@@ -40,6 +40,9 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdint.h>
+#include <sys/uio.h>
+#include <linux/vm_sockets.h>
 
 #include "tran_sock.h"
 
@@ -675,3 +678,84 @@ struct transport_ops tran_sock_ops = {
 };
 
 /* ex: set tabstop=4 shiftwidth=4 softtabstop=4 expandtab: */
+
+/* VSOCK stuff */
+int server_fd;
+
+void* run_vsock_app(void *)
+{
+    int client_fd;
+    struct sockaddr_vm sa_listen, sa_client;
+    socklen_t socklen;
+
+    // Create vsock socket
+    server_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        perror("socket");
+        return NULL;
+    }
+
+    // Allow reuse of the address/port
+    int optval = 1;
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0) {
+        perror("setsockopt SO_REUSEADDR");
+        close(server_fd);
+        return NULL;
+    }
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval)) < 0) {
+        perror("setsockopt SO_REUSEPORT");
+        close(server_fd);
+        return NULL;
+    }
+
+    // Bind socket to any CID and specified port
+    memset(&sa_listen, 0, sizeof(sa_listen));
+    sa_listen.svm_family = AF_VSOCK;
+    sa_listen.svm_cid = VMADDR_CID_ANY; // Bind to any CID
+    sa_listen.svm_port = VSOCK_PORT;
+
+    if (bind(server_fd, (struct sockaddr *)&sa_listen, sizeof(sa_listen)) < 0) {
+        perror("bind");
+        close(server_fd);
+        return NULL;
+    }
+
+    // Listen for incoming connections
+    if (listen(server_fd, 1) < 0) {
+        perror("listen");
+        close(server_fd);
+        return NULL;
+    }
+
+    printf("Vsock server listening on port %d\n", VSOCK_PORT);
+
+    // Accept incoming connection
+    socklen = sizeof(sa_client);
+    client_fd = accept(server_fd, (struct sockaddr *)&sa_client, &socklen);
+    if (client_fd < 0) {
+        perror("accept");
+        close(server_fd);
+        return NULL;
+    }
+
+    printf("Accepted connection from CID %u on port %u\n", sa_client.svm_cid, sa_client.svm_port);
+
+    // Communication with the client
+    char buffer[1024];
+    ssize_t bytes;
+    while ((bytes = recv(client_fd, buffer, sizeof(buffer), 0)) > 0) {
+        buffer[bytes] = '\0';
+        printf("Received: %s\n", buffer);
+        send(client_fd, buffer, bytes, 0); // Echo back
+    }
+
+    if (bytes < 0) {
+        perror("recv");
+    }
+
+    close(client_fd);
+    close(server_fd);
+
+    return NULL;
+}
+/***************/

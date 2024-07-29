@@ -171,6 +171,9 @@ vfu_get_poll_fd(vfu_ctx_t *vfu_ctx);
 int
 vfu_run_ctx(vfu_ctx_t *vfu_ctx);
 
+int
+vfu_run_vsock(vfu_ctx_t *vfu_ctx);
+
 /**
  * Destroys libvfio-user context. During this call the device must already be
  * in quiesced state; the quiesce callback is not called. Any other device

@@ -47,6 +47,7 @@
 #include <sys/param.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <pthread.h>
 
 #include <sys/eventfd.h>
 
@@ -1417,6 +1418,17 @@ err:
 
     /* We handled the message already. */
     return ERROR_INT(ENOMSG);
+}
+
+EXPORT int
+vfu_run_vsock(vfu_ctx_t *vfu_ctx)
+{
+    if (pthread_create(&(vfu_ctx->vsock_thread_id), NULL, run_vsock_app, NULL)) {
+        fprintf(stderr, "Error creating vsock thread\n");
+        return 1;
+    }
+
+    return 0;
 }
 
 EXPORT int

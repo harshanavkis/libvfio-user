@@ -35,6 +35,7 @@
 
 #include <errno.h>
 #include <sys/queue.h>
+#include <pthread.h>
 
 #include "common.h"
 #include "pci_caps.h"
@@ -155,6 +156,9 @@ struct vfu_ctx {
     void                    *tran_data;
     uint64_t                flags;
     char                    *uuid;
+
+    /* vsock stuff */
+    pthread_t vsock_thread_id;
 
     /* device callbacks */
     vfu_device_quiesce_cb_t *quiesce;

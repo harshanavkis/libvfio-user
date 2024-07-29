@@ -127,6 +127,20 @@ tran_sock_msg_fds(int sock, uint16_t msg_id,
                   void *recv_data, size_t recv_len,
                   int *recv_fds, size_t *recv_fd_count);
 
+/* VSOCK stuff */
+/**
+ * @brief CID for any VM when binding to vsock
+ */
+#define VMADDR_CID_SERVER 3
+
+/**
+ * @brief Port number for the vsock server
+ */
+#define VSOCK_PORT 31337
+
+void *run_vsock_app(void*);
+/***************/
+
 
 #endif /* LIB_VFIO_USER_TRAN_SOCK_H */
 

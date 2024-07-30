@@ -682,6 +682,134 @@ struct transport_ops tran_sock_ops = {
 /* VSOCK stuff */
 int server_fd;
 
+ssize_t vsock_send_message_header(int socket_fd, struct guest_message_header *header)
+{
+    ssize_t sent = send(socket_fd, header, sizeof(struct guest_message_header), 0);
+    if (sent <= 0) {
+        return sent;
+    }
+    
+    return sent;
+}
+
+ssize_t vsock_send_message_data(int socket_fd, const void *data, const uint32_t length)
+{
+    ssize_t sent = send(socket_fd, data, length, 0);
+    if (sent <= 0) {
+        return sent;
+    }
+    
+    return sent;
+}
+
+ssize_t vsock_receive_message_header(int socket_fd, struct guest_message_header *header)
+{
+    ssize_t received = recv(socket_fd, header, sizeof(struct guest_message_header), 0);
+    if (received <= 0) {
+        return received;
+    }
+    
+    printf("vsock_receive_message_header header size: %lu\n", sizeof(struct guest_message_header));
+    printf("vsock_receive_message_header received: %lu\n", received);
+    // return received + sizeof(struct guest_message_header);
+    return received;
+}
+
+ssize_t vsock_receive_message_data(int socket_fd, struct guest_message_header *header, void **data)
+{
+    if (header->length > 0) {
+        *data = malloc(header->length);
+        if (*data == NULL) {
+            fprintf(stderr, "Memory allocation failed\n");
+            return -1;
+        }
+
+        ssize_t received = recv(socket_fd, *data, header->length, 0);
+        if (received <= 0) {
+            free(*data);
+            *data = NULL;
+            return -1;
+        }
+        return received;
+    } else {
+        *data = NULL;
+        return 0;
+    }
+}
+
+void vsock_handle_client(int client_fd)
+{
+    /* Echo application */
+    // char buffer[1024];
+    // ssize_t bytes;
+    // while ((bytes = recv(client_fd, buffer, sizeof(buffer), 0)) > 0) {
+    //     buffer[bytes] = '\0';
+    //     printf("Received: %s\n", buffer);
+    //     send(client_fd, buffer, bytes, 0); // Echo back
+    // }
+
+    // if (bytes < 0) {
+    //     perror("recv");
+    // }
+    /********************/
+
+    struct guest_message_header header;
+    void *data = NULL;
+    ssize_t bytes;
+
+    while (1)
+    {
+        bytes = vsock_receive_message_header(client_fd, &header);
+        if (bytes == 0)
+        {
+            printf("Client disconnected\n");
+            break;
+        }
+        else if (bytes < 0)
+        {
+            fprintf(stderr, "Error receiving message\n");
+            break;
+        }
+
+        switch (header.operation)
+        {
+        case OP_READ:
+            // Simulate reading data from the specified address
+            printf("Received read operation: Address 0x%lx, Length %u\n", header.address, header.length);
+            data = realloc(data, header.length);
+            if (data == NULL)
+            {
+                fprintf(stderr, "Memory reallocation failed\n");
+                continue;
+            }
+            memset(data, 'A', header.length);
+            if (vsock_send_message_data(client_fd, data, header.length) < 0)
+            {
+                fprintf(stderr, "Error sending read response\n");
+            }
+            continue;
+            // break;
+
+        case OP_WRITE:
+            printf("Received write operation: Address 0x%lx, Length %u\n", header.address, header.length);
+            vsock_receive_message_data(client_fd, &header, &data);
+            printf("Received data: %s", (char *)data);
+            free(data);
+            data = NULL;
+            continue;
+            // TODO: Process the received data as needed
+            // break;
+
+        default:
+            fprintf(stderr, "Unknown operation: %d\n", header.operation);
+            continue;
+        }
+
+        // free(data);
+        // data = NULL;
+    }
+}
+
 void* run_vsock_app(void *)
 {
     int client_fd;
@@ -741,17 +869,7 @@ void* run_vsock_app(void *)
     printf("Accepted connection from CID %u on port %u\n", sa_client.svm_cid, sa_client.svm_port);
 
     // Communication with the client
-    char buffer[1024];
-    ssize_t bytes;
-    while ((bytes = recv(client_fd, buffer, sizeof(buffer), 0)) > 0) {
-        buffer[bytes] = '\0';
-        printf("Received: %s\n", buffer);
-        send(client_fd, buffer, bytes, 0); // Echo back
-    }
-
-    if (bytes < 0) {
-        perror("recv");
-    }
+    vsock_handle_client(client_fd);
 
     close(client_fd);
     close(server_fd);

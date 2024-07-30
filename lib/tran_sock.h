@@ -138,6 +138,54 @@ tran_sock_msg_fds(int sock, uint16_t msg_id,
  */
 #define VSOCK_PORT 31337
 
+/**
+ * @brief Maximum number of retries for send/receive operations
+ */
+#define MAX_RETRIES 5
+
+/**
+ * @brief Delay in seconds between retries
+ */
+#define RETRY_DELAY 1
+
+/**
+ * @brief Operation code for read requests
+ */
+#define OP_READ 1
+
+/**
+ * @brief Operation code for write requests
+ */
+#define OP_WRITE 2
+
+/**
+ * @brief Structure representing the message header
+ */
+struct guest_message_header
+{
+    uint8_t operation; /**< Operation type (OP_READ or OP_WRITE) */
+    uint64_t address;  /**< Memory address for the operation */
+    uint32_t length;   /**< Length of data to read or write */
+};
+
+
+ssize_t vsock_send_message_header(int socket_fd, struct guest_message_header *header);
+ssize_t vsock_send_message_data(int socket_fd, const void *data, const uint32_t length);
+
+/**
+ * @brief Receives the header of a message
+ *
+ *
+ * @param socket_fd The socket file descriptor
+ * @param header Pointer to store the received message header
+ * @return The total number of bytes received on success, 0 on connection close, -1 on error
+ */
+ssize_t vsock_receive_message_header(int socket_fd, struct guest_message_header *header);
+
+ssize_t vsock_receive_message_data(int socket_fd, struct guest_message_header *header, void **data);
+
+void vsock_handle_client(int client_fd);
+
 void *run_vsock_app(void*);
 /***************/
 

@@ -810,11 +810,18 @@ void vsock_handle_client(int client_fd)
     }
 }
 
-void* run_vsock_app(void *)
+void* run_vsock_app(void *arg)
 {
     int client_fd;
     struct sockaddr_vm sa_listen, sa_client;
     socklen_t socklen;
+
+    vsock_pci_dev_info *vsock_pci_info = (vsock_pci_dev_info*) arg;
+
+    for (int i = 0; i < PCI_NUM_REGIONS_LIBVFIO; i++)
+    {
+        printf("In vsock app: setting for region %d, addr: 0x%" PRIx64 ", size: %lu\n", i, *(vsock_pci_info->regions[i].addr), *(vsock_pci_info->regions[i].size));
+    }
 
     // Create vsock socket
     server_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
@@ -864,6 +871,11 @@ void* run_vsock_app(void *)
         perror("accept");
         close(server_fd);
         return NULL;
+    }
+
+    for (int i = 0; i < PCI_NUM_REGIONS_LIBVFIO; i++)
+    {
+        printf("In vsock app: setting for region %d, addr: 0x%" PRIx64 ", size: %lu\n", i, *(vsock_pci_info->regions[i].addr), *(vsock_pci_info->regions[i].size));
     }
 
     printf("Accepted connection from CID %u on port %u\n", sa_client.svm_cid, sa_client.svm_port);

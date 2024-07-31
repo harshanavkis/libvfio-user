@@ -168,7 +168,6 @@ struct guest_message_header
     uint32_t length;   /**< Length of data to read or write */
 };
 
-
 ssize_t vsock_send_message_header(int socket_fd, struct guest_message_header *header);
 ssize_t vsock_send_message_data(int socket_fd, const void *data, const uint32_t length);
 
@@ -186,7 +185,7 @@ ssize_t vsock_receive_message_data(int socket_fd, struct guest_message_header *h
 
 void vsock_handle_client(int client_fd);
 
-void *run_vsock_app(void*);
+void *run_vsock_app(void* pci_dev);
 /***************/
 
 

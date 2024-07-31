@@ -171,9 +171,6 @@ vfu_get_poll_fd(vfu_ctx_t *vfu_ctx);
 int
 vfu_run_ctx(vfu_ctx_t *vfu_ctx);
 
-int
-vfu_run_vsock(vfu_ctx_t *vfu_ctx);
-
 /**
  * Destroys libvfio-user context. During this call the device must already be
  * in quiesced state; the quiesce callback is not called. Any other device
@@ -1081,6 +1078,33 @@ vfu_create_ioeventfd(vfu_ctx_t *vfu_ctx, uint32_t region_idx, int fd,
 #ifdef __cplusplus
 }
 #endif
+
+// VSOCK stuff
+
+/**
+ * @brief Structure representing the PCI BARs in a device
+ */
+typedef struct vsock_pci_bar_info
+{
+    uint64_t *addr; // Address of region, -1 means not mapped
+    uint64_t *size; // Size of region
+} vsock_pci_bar_info;
+
+/**
+ * @brief Number of PCI regions including config space and BARs
+ */
+#define PCI_NUM_REGIONS_LIBVFIO 7
+
+/**
+ * @brief Structure representing the PCI information that is passed to the vsock thread
+ */
+typedef struct vsock_pci_dev_info
+{   
+    vsock_pci_bar_info regions[PCI_NUM_REGIONS_LIBVFIO];
+} vsock_pci_dev_info;
+
+int
+vfu_run_vsock(vfu_ctx_t *vfu_ctx, vsock_pci_dev_info *vsock_pci_info);
 
 #endif /* LIB_VFIO_USER_H */
 

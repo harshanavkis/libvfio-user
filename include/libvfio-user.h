@@ -1100,11 +1100,14 @@ typedef struct vsock_pci_bar_info
  */
 typedef struct vsock_pci_dev_info
 {   
+    struct vfu_ctx *vctx;
     vsock_pci_bar_info regions[PCI_NUM_REGIONS_LIBVFIO];
 } vsock_pci_dev_info;
 
 int
 vfu_run_vsock(vfu_ctx_t *vfu_ctx, vsock_pci_dev_info *vsock_pci_info);
+
+char *get_vfu_ctx_uuid(vfu_ctx_t * vfu_ctx);
 
 #endif /* LIB_VFIO_USER_H */
 

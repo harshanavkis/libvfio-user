@@ -1431,6 +1431,12 @@ vfu_run_vsock(vfu_ctx_t *vfu_ctx, vsock_pci_dev_info *vsock_pci_info)
     return 0;
 }
 
+EXPORT 
+char *get_vfu_ctx_uuid(vfu_ctx_t * vfu_ctx)
+{
+    return vfu_ctx->uuid;
+}
+
 EXPORT int
 vfu_run_ctx(vfu_ctx_t *vfu_ctx)
 {

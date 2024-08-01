@@ -709,8 +709,8 @@ ssize_t vsock_receive_message_header(int socket_fd, struct guest_message_header 
         return received;
     }
     
-    printf("vsock_receive_message_header header size: %lu\n", sizeof(struct guest_message_header));
-    printf("vsock_receive_message_header received: %lu\n", received);
+    printf("tran_sock.c: vsock_receive_message_header header size: %lu\n", sizeof(struct guest_message_header));
+    printf("tran_sock.c: vsock_receive_message_header received: %lu\n", received);
     // return received + sizeof(struct guest_message_header);
     return received;
 }
@@ -737,14 +737,30 @@ ssize_t vsock_receive_message_data(int socket_fd, struct guest_message_header *h
     }
 }
 
-void vsock_handle_client(int client_fd)
+int get_pci_region(vsock_pci_dev_info *vsock_pci_info, uint64_t addr, uint32_t size)
+{
+    for (int i = 0; i < PCI_NUM_REGIONS_LIBVFIO; i++)
+    {
+        if (*(vsock_pci_info->regions[i].addr) == 0x0)
+            continue;
+        
+        if ((addr >= *(vsock_pci_info->regions[i].addr)) && (addr + size <= *(vsock_pci_info->regions[i].addr) + *(vsock_pci_info->regions[i].size)))
+        {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+void vsock_handle_client(int client_fd, vsock_pci_dev_info *vsock_pci_info)
 {
     /* Echo application */
     // char buffer[1024];
     // ssize_t bytes;
     // while ((bytes = recv(client_fd, buffer, sizeof(buffer), 0)) > 0) {
     //     buffer[bytes] = '\0';
-    //     printf("Received: %s\n", buffer);
+    //     printf("tran_sock.c: Received: %s\n", buffer);
     //     send(client_fd, buffer, bytes, 0); // Echo back
     // }
 
@@ -757,12 +773,17 @@ void vsock_handle_client(int client_fd)
     void *data = NULL;
     ssize_t bytes;
 
+    for (int i = 0; i < PCI_NUM_REGIONS_LIBVFIO; i++)
+    {
+        printf("tran_sock.c: In vsock app: setting for region %d, addr: 0x%" PRIx64 ", size: %lu\n", i, *(vsock_pci_info->regions[i].addr), *(vsock_pci_info->regions[i].size));
+    }
+
     while (1)
     {
         bytes = vsock_receive_message_header(client_fd, &header);
         if (bytes == 0)
         {
-            printf("Client disconnected\n");
+            printf("tran_sock.c: Client disconnected\n");
             break;
         }
         else if (bytes < 0)
@@ -775,14 +796,34 @@ void vsock_handle_client(int client_fd)
         {
         case OP_READ:
             // Simulate reading data from the specified address
-            printf("Received read operation: Address 0x%lx, Length %u\n", header.address, header.length);
+            printf("tran_sock.c: Received read operation: Address 0x%lx, Length %u\n", header.address, header.length);
             data = realloc(data, header.length);
             if (data == NULL)
             {
                 fprintf(stderr, "Memory reallocation failed\n");
                 continue;
             }
-            memset(data, 'A', header.length);
+
+            int pci_region = get_pci_region(vsock_pci_info, header.address, header.length);
+            printf("tran_sock.c: Got PCI region: %d\n", pci_region);
+            vfu_region_access_cb_t *cb = vsock_pci_info->vctx->reg_info[pci_region].cb;
+
+            loff_t offset = header.address -  *(vsock_pci_info->regions[pci_region].addr);
+            bool is_write = false;
+            uint32_t ret = cb(vsock_pci_info->vctx, data, header.length, offset, is_write);
+
+            if (ret != header.length)
+            {
+                printf("tran_sock.c: Reading %u bytes failed\n", header.length);
+                memset(data, 'A', header.length);
+            }
+
+            printf("tran_sock.c: Read data: ");
+            for (uint32_t i = 0; i < header.length; i++)
+            {
+                printf("%02X", ((uint8_t *)data)[i]);
+            }
+            printf("\n");
             if (vsock_send_message_data(client_fd, data, header.length) < 0)
             {
                 fprintf(stderr, "Error sending read response\n");
@@ -791,9 +832,9 @@ void vsock_handle_client(int client_fd)
             // break;
 
         case OP_WRITE:
-            printf("Received write operation: Address 0x%lx, Length %u\n", header.address, header.length);
+            printf("tran_sock.c: Received write operation: Address 0x%lx, Length %u\n", header.address, header.length);
             vsock_receive_message_data(client_fd, &header, &data);
-            printf("Received data: %s", (char *)data);
+            printf("tran_sock.c: Received data: %s", (char *)data);
             free(data);
             data = NULL;
             continue;
@@ -818,9 +859,11 @@ void* run_vsock_app(void *arg)
 
     vsock_pci_dev_info *vsock_pci_info = (vsock_pci_dev_info*) arg;
 
+    printf("tran_sock.c: In vsock app: vfu_ctx: uuid: %s\n", vsock_pci_info->vctx->uuid);
+
     for (int i = 0; i < PCI_NUM_REGIONS_LIBVFIO; i++)
     {
-        printf("In vsock app: setting for region %d, addr: 0x%" PRIx64 ", size: %lu\n", i, *(vsock_pci_info->regions[i].addr), *(vsock_pci_info->regions[i].size));
+        printf("tran_sock.c: In vsock app: setting for region %d, addr: 0x%" PRIx64 ", size: %lu\n", i, *(vsock_pci_info->regions[i].addr), *(vsock_pci_info->regions[i].size));
     }
 
     // Create vsock socket
@@ -862,7 +905,7 @@ void* run_vsock_app(void *arg)
         return NULL;
     }
 
-    printf("Vsock server listening on port %d\n", VSOCK_PORT);
+    printf("tran_sock.c: Vsock server listening on port %d\n", VSOCK_PORT);
 
     // Accept incoming connection
     socklen = sizeof(sa_client);
@@ -873,15 +916,10 @@ void* run_vsock_app(void *arg)
         return NULL;
     }
 
-    for (int i = 0; i < PCI_NUM_REGIONS_LIBVFIO; i++)
-    {
-        printf("In vsock app: setting for region %d, addr: 0x%" PRIx64 ", size: %lu\n", i, *(vsock_pci_info->regions[i].addr), *(vsock_pci_info->regions[i].size));
-    }
-
-    printf("Accepted connection from CID %u on port %u\n", sa_client.svm_cid, sa_client.svm_port);
+    printf("tran_sock.c: Accepted connection from CID %u on port %u\n", sa_client.svm_cid, sa_client.svm_port);
 
     // Communication with the client
-    vsock_handle_client(client_fd);
+    vsock_handle_client(client_fd, vsock_pci_info);
 
     close(client_fd);
     close(server_fd);

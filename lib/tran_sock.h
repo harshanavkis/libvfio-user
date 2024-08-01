@@ -183,7 +183,9 @@ ssize_t vsock_receive_message_header(int socket_fd, struct guest_message_header 
 
 ssize_t vsock_receive_message_data(int socket_fd, struct guest_message_header *header, void **data);
 
-void vsock_handle_client(int client_fd);
+int get_pci_region(vsock_pci_dev_info *vsock_pci_info, uint64_t addr, uint32_t size);
+
+void vsock_handle_client(int client_fd, vsock_pci_dev_info *vsock_pci_info);
 
 void *run_vsock_app(void* pci_dev);
 /***************/

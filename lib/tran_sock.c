@@ -796,7 +796,7 @@ void vsock_handle_client(int client_fd, vsock_pci_dev_info *vsock_pci_info)
         {
         case OP_READ:
             // Simulate reading data from the specified address
-            printf("tran_sock.c: Received read operation: Address 0x%lx, Length %u\n", header.address, header.length);
+            printf("tran_sock.c: OP_READ: Received read operation: Address 0x%lx, Length %u\n", header.address, header.length);
             data = realloc(data, header.length);
             if (data == NULL)
             {
@@ -805,7 +805,7 @@ void vsock_handle_client(int client_fd, vsock_pci_dev_info *vsock_pci_info)
             }
 
             int pci_region = get_pci_region(vsock_pci_info, header.address, header.length);
-            printf("tran_sock.c: Got PCI region: %d\n", pci_region);
+            printf("tran_sock.c: OP_READ: Got PCI region: %d\n", pci_region);
             vfu_region_access_cb_t *cb = vsock_pci_info->vctx->reg_info[pci_region].cb;
 
             loff_t offset = header.address -  *(vsock_pci_info->regions[pci_region].addr);
@@ -814,11 +814,11 @@ void vsock_handle_client(int client_fd, vsock_pci_dev_info *vsock_pci_info)
 
             if (ret != header.length)
             {
-                printf("tran_sock.c: Reading %u bytes failed\n", header.length);
+                printf("tran_sock.c: OP_READ: Reading %u bytes failed\n", header.length);
                 memset(data, 'A', header.length);
             }
 
-            printf("tran_sock.c: Read data: ");
+            printf("tran_sock.c: OP_READ: Read data: ");
             for (uint32_t i = 0; i < header.length; i++)
             {
                 printf("%02X", ((uint8_t *)data)[i]);
@@ -832,9 +832,33 @@ void vsock_handle_client(int client_fd, vsock_pci_dev_info *vsock_pci_info)
             // break;
 
         case OP_WRITE:
-            printf("tran_sock.c: Received write operation: Address 0x%lx, Length %u\n", header.address, header.length);
+            printf("tran_sock.c: OP_WRITE: Received write operation: Address 0x%lx, Length %u\n", header.address, header.length);
             vsock_receive_message_data(client_fd, &header, &data);
-            printf("tran_sock.c: Received data: %s", (char *)data);
+            // printf("tran_sock.c: Received data: %s", (char *)data);
+            pci_region = get_pci_region(vsock_pci_info, header.address, header.length);
+            cb = vsock_pci_info->vctx->reg_info[pci_region].cb;
+
+            offset = header.address -  *(vsock_pci_info->regions[pci_region].addr);
+            is_write = true;
+            ret = cb(vsock_pci_info->vctx, data, header.length, offset, is_write);
+
+            if (ret != header.length)
+            {
+                printf("tran_sock.c: OP_WRITE: Reading %u bytes failed\n", header.length);
+                memset(data, 'A', header.length);
+            }
+
+            printf("tran_sock.c: OP_WRITE: Write data: ");
+            for (uint32_t i = 0; i < header.length; i++)
+            {
+                printf("%02X", ((uint8_t *)data)[i]);
+            }
+            printf("\n");
+            if (vsock_send_message_data(client_fd, data, header.length) < 0)
+            {
+                fprintf(stderr, " OP_WRITE: Error sending read response\n");
+            }
+
             free(data);
             data = NULL;
             continue;

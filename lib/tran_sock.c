@@ -44,6 +44,10 @@
 #include <sys/uio.h>
 #include <linux/vm_sockets.h>
 
+#include <unistd.h>
+#include <sys/mman.h>
+#include <string.h>
+
 #include "tran_sock.h"
 
 typedef struct {
@@ -737,7 +741,7 @@ ssize_t vsock_receive_message_data(int socket_fd, struct guest_message_header *h
     }
 }
 
-int get_pci_region(vsock_pci_dev_info *vsock_pci_info, uint64_t addr, uint32_t size)
+int get_pci_region(disagg_pci_dev_info *vsock_pci_info, uint64_t addr, uint32_t size)
 {
     for (int i = 0; i < PCI_NUM_REGIONS_LIBVFIO; i++)
     {
@@ -753,7 +757,7 @@ int get_pci_region(vsock_pci_dev_info *vsock_pci_info, uint64_t addr, uint32_t s
     return -1;
 }
 
-void vsock_handle_client(int client_fd, vsock_pci_dev_info *vsock_pci_info)
+void vsock_handle_client(int client_fd, disagg_pci_dev_info *vsock_pci_info)
 {
     /* Echo application */
     // char buffer[1024];
@@ -773,6 +777,8 @@ void vsock_handle_client(int client_fd, vsock_pci_dev_info *vsock_pci_info)
     void *data = NULL;
     ssize_t bytes;
 
+    int guest_driver_request = 0;
+
     for (int i = 0; i < PCI_NUM_REGIONS_LIBVFIO; i++)
     {
         printf("tran_sock.c: In vsock app: setting for region %d, addr: 0x%" PRIx64 ", size: %lu\n", i, *(vsock_pci_info->regions[i].addr), *(vsock_pci_info->regions[i].size));
@@ -780,6 +786,8 @@ void vsock_handle_client(int client_fd, vsock_pci_dev_info *vsock_pci_info)
 
     while (1)
     {
+        guest_driver_request += 1;
+
         bytes = vsock_receive_message_header(client_fd, &header);
         if (bytes == 0)
         {
@@ -791,6 +799,8 @@ void vsock_handle_client(int client_fd, vsock_pci_dev_info *vsock_pci_info)
             fprintf(stderr, "Error receiving message\n");
             break;
         }
+
+        printf("tran_sock.c: guest request: %d\n", guest_driver_request);
 
         switch (header.operation)
         {
@@ -881,7 +891,7 @@ void* run_vsock_app(void *arg)
     struct sockaddr_vm sa_listen, sa_client;
     socklen_t socklen;
 
-    vsock_pci_dev_info *vsock_pci_info = (vsock_pci_dev_info*) arg;
+    disagg_pci_dev_info *vsock_pci_info = (disagg_pci_dev_info*) arg;
 
     printf("tran_sock.c: In vsock app: vfu_ctx: uuid: %s\n", vsock_pci_info->vctx->uuid);
 
@@ -950,4 +960,240 @@ void* run_vsock_app(void *arg)
 
     return NULL;
 }
+
+/* Shared memory stuff */
+
+
+#define SHMEM_FILE "/dev/shm/ivshmem"  // Adjust this path as needed
+#define SHMEM_SIZE (1 << 20)  // 1 MB, adjust as needed
+#define READ_DOORBELL_OFFSET 0
+#define WRITE_DOORBELL_OFFSET 1
+#define DOORBELL_SIZE 1  // 1 byte for each doorbell
+#define TOTAL_DOORBELL_SIZE (DOORBELL_SIZE * 2)
+
+static void *shmem = NULL;
+static volatile uint8_t *read_doorbell = NULL;
+static volatile uint8_t *write_doorbell = NULL;
+
+static int create_or_open_shmem_file() {
+    int fd = open(SHMEM_FILE, O_RDWR | O_CREAT, 0666);
+    if (fd < 0) {
+        perror("Failed to open or create shared memory file");
+        return -1;
+    }
+
+    struct stat st;
+    if (fstat(fd, &st) < 0) {
+        perror("Failed to get file status");
+        close(fd);
+        return -1;
+    }
+
+    if (st.st_size != SHMEM_SIZE) {
+        if (ftruncate(fd, SHMEM_SIZE) < 0) {
+            perror("Failed to set file size");
+            close(fd);
+            return -1;
+        }
+        printf("Created shared memory file with size %d bytes\n", SHMEM_SIZE);
+    } else {
+        printf("Opened existing shared memory file with correct size\n");
+    }
+
+    return fd;
+}
+
+static int init_shared_memory() {
+    int fd = create_or_open_shmem_file();
+    if (fd < 0) {
+        return -1;
+    }
+
+    shmem = mmap(NULL, SHMEM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (shmem == MAP_FAILED) {
+        perror("Failed to mmap shared memory");
+        close(fd);
+        return -1;
+    }
+
+    read_doorbell = (volatile uint8_t *)shmem + READ_DOORBELL_OFFSET;
+    write_doorbell = (volatile uint8_t *)shmem + WRITE_DOORBELL_OFFSET;
+    close(fd);
+    
+    // Initialize doorbells to 0
+    *read_doorbell = 0;
+    *write_doorbell = 0;
+    msync(shmem, TOTAL_DOORBELL_SIZE, MS_SYNC);
+    
+    return 0;
+}
+
+static void wait_for_write_doorbell_set() {
+    // uint32_t counter = 0;
+    while (__atomic_load_n(write_doorbell, __ATOMIC_ACQUIRE) == 0) {
+        // if (++counter % 1000000 == 0) {
+        //     printf("Still waiting for write doorbell to be set. Current value: %u\n", *write_doorbell);
+        // }
+    }
+}
+
+static void wait_for_read_doorbell_clear() {
+    while (__atomic_load_n(read_doorbell, __ATOMIC_ACQUIRE) != 0) {
+        // Busy-wait
+    }
+}
+
+static ssize_t ivshmem_read(void *buf, size_t count, off_t offset) {
+    if (!shmem || offset >= SHMEM_SIZE - TOTAL_DOORBELL_SIZE)
+        return -1;
+
+    if (offset + count > SHMEM_SIZE - TOTAL_DOORBELL_SIZE)
+        count = SHMEM_SIZE - TOTAL_DOORBELL_SIZE - offset;
+
+    memcpy(buf, shmem + TOTAL_DOORBELL_SIZE + offset, count);
+    return count;
+}
+
+static ssize_t ivshmem_write(const void *buf, size_t count, off_t offset) {
+    if (!shmem || offset >= SHMEM_SIZE - TOTAL_DOORBELL_SIZE)
+        return -1;
+
+    if (offset + count > SHMEM_SIZE - TOTAL_DOORBELL_SIZE)
+        count = SHMEM_SIZE - TOTAL_DOORBELL_SIZE - offset;
+
+    wait_for_read_doorbell_clear();
+
+    memcpy(shmem + TOTAL_DOORBELL_SIZE + offset, buf, count);
+
+    __atomic_store_n(read_doorbell, 1, __ATOMIC_RELEASE);
+
+    return count;
+}
+
+static int wait_and_read_message(struct guest_message_header *header) {
+    wait_for_write_doorbell_set();
+
+    ssize_t read_bytes = ivshmem_read(header, sizeof(struct guest_message_header), 0);
+    if (read_bytes < 0) {
+        return -1;
+    }
+
+    __atomic_store_n(write_doorbell, 0, __ATOMIC_RELEASE);
+
+    return read_bytes;
+}
+
+void *run_shmem_app(void* arg) {
+    if (init_shared_memory() < 0) {
+        printf("SHMEM: init_shared_memory failed\n");
+        // return;
+    }
+
+    disagg_pci_dev_info *vsock_pci_info = (disagg_pci_dev_info*) arg;
+
+    printf("tran_sock.c: In shmem app: vfu_ctx: uuid: %s\n", vsock_pci_info->vctx->uuid);
+
+    printf("SHMEM application started. Waiting for messages...\n");
+
+    void *data = NULL;
+
+    while (1) {
+        struct guest_message_header header;
+        if (wait_and_read_message(&header) < 0) {
+            perror("Failed to read message");
+            continue;
+        }
+
+        printf("Received message: operation=%u, address=0x%lx, length=%u\n",
+               header.operation, header.address, header.length);
+
+        switch (header.operation)
+        {
+        case OP_READ:
+            // Simulate reading data from the specified address
+            printf("tran_sock.c: OP_READ: Received read operation: Address 0x%lx, Length %u\n", header.address, header.length);
+            data = realloc(data, header.length);
+            if (data == NULL)
+            {
+                fprintf(stderr, "Memory reallocation failed\n");
+                continue;
+            }
+
+            int pci_region = get_pci_region(vsock_pci_info, header.address, header.length);
+            printf("tran_sock.c: OP_READ: Got PCI region: %d\n", pci_region);
+            vfu_region_access_cb_t *cb = vsock_pci_info->vctx->reg_info[pci_region].cb;
+
+            loff_t offset = header.address -  *(vsock_pci_info->regions[pci_region].addr);
+            bool is_write = false;
+            uint32_t ret = cb(vsock_pci_info->vctx, data, header.length, offset, is_write);
+
+            if (ret != header.length)
+            {
+                printf("tran_sock.c: OP_READ: Reading %u bytes failed\n", header.length);
+                memset(data, 'A', header.length);
+            }
+
+            printf("tran_sock.c: OP_READ: Read data: ");
+            for (uint32_t i = 0; i < header.length; i++)
+            {
+                printf("%02X", ((uint8_t *)data)[i]);
+            }
+            printf("\n");
+
+            if (ivshmem_write(data, header.length, 0) < 0) {
+                perror("Failed to write response");
+                continue;
+            }
+            continue;
+            // break;
+
+        // case OP_WRITE:
+        //     printf("tran_sock.c: OP_WRITE: Received write operation: Address 0x%lx, Length %u\n", header.address, header.length);
+        //     vsock_receive_message_data(client_fd, &header, &data);
+        //     // printf("tran_sock.c: Received data: %s", (char *)data);
+        //     pci_region = get_pci_region(vsock_pci_info, header.address, header.length);
+        //     cb = vsock_pci_info->vctx->reg_info[pci_region].cb;
+
+        //     offset = header.address -  *(vsock_pci_info->regions[pci_region].addr);
+        //     is_write = true;
+        //     ret = cb(vsock_pci_info->vctx, data, header.length, offset, is_write);
+
+        //     if (ret != header.length)
+        //     {
+        //         printf("tran_sock.c: OP_WRITE: Reading %u bytes failed\n", header.length);
+        //         memset(data, 'A', header.length);
+        //     }
+
+        //     printf("tran_sock.c: OP_WRITE: Write data: ");
+        //     for (uint32_t i = 0; i < header.length; i++)
+        //     {
+        //         printf("%02X", ((uint8_t *)data)[i]);
+        //     }
+        //     printf("\n");
+        //     if (vsock_send_message_data(client_fd, data, header.length) < 0)
+        //     {
+        //         fprintf(stderr, " OP_WRITE: Error sending read response\n");
+        //     }
+
+        //     free(data);
+        //     data = NULL;
+        //     continue;
+        //     // TODO: Process the received data as needed
+        //     // break;
+
+        default:
+            fprintf(stderr, "Unknown operation: %d\n", header.operation);
+            continue;
+        }
+
+        printf("Response sent. Waiting for next message...\n");
+    }
+
+    munmap(shmem, SHMEM_SIZE);
+    // return;
+}
+
+
+/***********************/
+
 /***************/

@@ -1421,9 +1421,20 @@ err:
 }
 
 EXPORT int
-vfu_run_vsock(vfu_ctx_t *vfu_ctx, vsock_pci_dev_info *vsock_pci_info)
+vfu_run_vsock(vfu_ctx_t *vfu_ctx, disagg_pci_dev_info *disagg_pci_info)
 {
-    if (pthread_create(&(vfu_ctx->vsock_thread_id), NULL, run_vsock_app, (void *) vsock_pci_info)) {
+    if (pthread_create(&(vfu_ctx->vsock_thread_id), NULL, run_vsock_app, (void *) disagg_pci_info)) {
+        fprintf(stderr, "Error creating vsock thread\n");
+        return 1;
+    }
+
+    return 0;
+}
+
+EXPORT int
+vfu_run_shmem(vfu_ctx_t *vfu_ctx, disagg_pci_dev_info *disagg_pci_info)
+{
+    if (pthread_create(&(vfu_ctx->vsock_thread_id), NULL, run_shmem_app, (void *) disagg_pci_info)) {
         fprintf(stderr, "Error creating vsock thread\n");
         return 1;
     }

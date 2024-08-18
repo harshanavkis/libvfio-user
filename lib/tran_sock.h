@@ -166,7 +166,7 @@ struct guest_message_header
     uint8_t operation; /**< Operation type (OP_READ or OP_WRITE) */
     uint64_t address;  /**< Memory address for the operation */
     uint32_t length;   /**< Length of data to read or write */
-};
+} __attribute__((packed));
 
 ssize_t vsock_send_message_header(int socket_fd, struct guest_message_header *header);
 ssize_t vsock_send_message_data(int socket_fd, const void *data, const uint32_t length);
@@ -183,11 +183,13 @@ ssize_t vsock_receive_message_header(int socket_fd, struct guest_message_header 
 
 ssize_t vsock_receive_message_data(int socket_fd, struct guest_message_header *header, void **data);
 
-int get_pci_region(vsock_pci_dev_info *vsock_pci_info, uint64_t addr, uint32_t size);
+int get_pci_region(disagg_pci_dev_info *disagg_pci_info, uint64_t addr, uint32_t size);
 
-void vsock_handle_client(int client_fd, vsock_pci_dev_info *vsock_pci_info);
+void vsock_handle_client(int client_fd, disagg_pci_dev_info *disagg_pci_info);
 
 void *run_vsock_app(void* pci_dev);
+
+void *run_shmem_app(void* pci_dev);
 /***************/
 
 

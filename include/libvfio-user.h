@@ -1084,11 +1084,11 @@ vfu_create_ioeventfd(vfu_ctx_t *vfu_ctx, uint32_t region_idx, int fd,
 /**
  * @brief Structure representing the PCI BARs in a device
  */
-typedef struct vsock_pci_bar_info
+typedef struct disagg_pci_bar_info
 {
     uint64_t *addr; // Address of region, -1 means not mapped
     uint64_t *size; // Size of region
-} vsock_pci_bar_info;
+} disagg_pci_bar_info;
 
 /**
  * @brief Number of PCI regions including config space and BARs
@@ -1098,14 +1098,17 @@ typedef struct vsock_pci_bar_info
 /**
  * @brief Structure representing the PCI information that is passed to the vsock thread
  */
-typedef struct vsock_pci_dev_info
+typedef struct disagg_pci_dev_info
 {   
     struct vfu_ctx *vctx;
-    vsock_pci_bar_info regions[PCI_NUM_REGIONS_LIBVFIO];
-} vsock_pci_dev_info;
+    disagg_pci_bar_info regions[PCI_NUM_REGIONS_LIBVFIO];
+} disagg_pci_dev_info;
 
 int
-vfu_run_vsock(vfu_ctx_t *vfu_ctx, vsock_pci_dev_info *vsock_pci_info);
+vfu_run_vsock(vfu_ctx_t *vfu_ctx, disagg_pci_dev_info *vsock_pci_info);
+
+int
+vfu_run_shmem(vfu_ctx_t *vfu_ctx, disagg_pci_dev_info *vsock_pci_info);
 
 char *get_vfu_ctx_uuid(vfu_ctx_t * vfu_ctx);
 

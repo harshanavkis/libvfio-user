@@ -1054,7 +1054,7 @@ static ssize_t ivshmem_read(void *buf, size_t count, off_t offset) {
     return count;
 }
 
-static ssize_t ivshmem_write(const void *buf, size_t count, off_t offset) {
+static ssize_t ivshmem_write(void *buf, size_t count, off_t offset) {
     if (!shmem || offset >= SHMEM_SIZE - TOTAL_DOORBELL_SIZE)
         return -1;
 
@@ -1070,10 +1070,10 @@ static ssize_t ivshmem_write(const void *buf, size_t count, off_t offset) {
     return count;
 }
 
-static int wait_and_read_message(struct guest_message_header *header) {
+static int wait_and_read_data(void *buf, size_t count) {
     wait_for_write_doorbell_set();
 
-    ssize_t read_bytes = ivshmem_read(header, sizeof(struct guest_message_header), 0);
+    ssize_t read_bytes = ivshmem_read(buf, count, 0);
     if (read_bytes < 0) {
         return -1;
     }
@@ -1096,10 +1096,11 @@ void *run_shmem_app(void* arg) {
     printf("SHMEM application started. Waiting for messages...\n");
 
     void *data = NULL;
+    bool is_write = false;
 
     while (1) {
         struct guest_message_header header;
-        if (wait_and_read_message(&header) < 0) {
+        if (wait_and_read_data(&header, sizeof(struct guest_message_header)) < 0) {
             perror("Failed to read message");
             continue;
         }
@@ -1124,7 +1125,7 @@ void *run_shmem_app(void* arg) {
             vfu_region_access_cb_t *cb = vsock_pci_info->vctx->reg_info[pci_region].cb;
 
             loff_t offset = header.address -  *(vsock_pci_info->regions[pci_region].addr);
-            bool is_write = false;
+            is_write = false;
             uint32_t ret = cb(vsock_pci_info->vctx, data, header.length, offset, is_write);
 
             if (ret != header.length)
@@ -1147,39 +1148,40 @@ void *run_shmem_app(void* arg) {
             continue;
             // break;
 
-        // case OP_WRITE:
-        //     printf("tran_sock.c: OP_WRITE: Received write operation: Address 0x%lx, Length %u\n", header.address, header.length);
-        //     vsock_receive_message_data(client_fd, &header, &data);
-        //     // printf("tran_sock.c: Received data: %s", (char *)data);
-        //     pci_region = get_pci_region(vsock_pci_info, header.address, header.length);
-        //     cb = vsock_pci_info->vctx->reg_info[pci_region].cb;
+        case OP_WRITE:
+            printf("tran_sock.c: OP_WRITE: Received write operation: Address 0x%lx, Length %u\n", header.address, header.length);
+            data = realloc(data, header.length);
+            if (data == NULL)
+            {
+                fprintf(stderr, "Memory reallocation failed\n");
+                continue;
+            }
 
-        //     offset = header.address -  *(vsock_pci_info->regions[pci_region].addr);
-        //     is_write = true;
-        //     ret = cb(vsock_pci_info->vctx, data, header.length, offset, is_write);
+            if (wait_and_read_data(data, header.length) < 0) {
+                perror("Failed to read data");
+                continue;
+            }
 
-        //     if (ret != header.length)
-        //     {
-        //         printf("tran_sock.c: OP_WRITE: Reading %u bytes failed\n", header.length);
-        //         memset(data, 'A', header.length);
-        //     }
+            pci_region = get_pci_region(vsock_pci_info, header.address, header.length);
+            cb = vsock_pci_info->vctx->reg_info[pci_region].cb;
 
-        //     printf("tran_sock.c: OP_WRITE: Write data: ");
-        //     for (uint32_t i = 0; i < header.length; i++)
-        //     {
-        //         printf("%02X", ((uint8_t *)data)[i]);
-        //     }
-        //     printf("\n");
-        //     if (vsock_send_message_data(client_fd, data, header.length) < 0)
-        //     {
-        //         fprintf(stderr, " OP_WRITE: Error sending read response\n");
-        //     }
+            printf("tran_sock.c: OP_WRITE: Write data: ");
+            for (uint32_t i = 0; i < header.length; i++)
+            {
+                printf("%02X", ((uint8_t *)data)[i]);
+            }
+            printf("\n");
 
-        //     free(data);
-        //     data = NULL;
-        //     continue;
-        //     // TODO: Process the received data as needed
-        //     // break;
+            offset = header.address -  *(vsock_pci_info->regions[pci_region].addr);
+            is_write = true;
+            ret = cb(vsock_pci_info->vctx, data, header.length, offset, is_write);
+
+            if (ret != header.length)
+            {
+                printf("tran_sock.c: OP_WRITE: Writing %u bytes failed\n", header.length);
+            }
+
+            continue;
 
         default:
             fprintf(stderr, "Unknown operation: %d\n", header.operation);
